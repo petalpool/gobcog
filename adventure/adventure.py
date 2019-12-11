@@ -74,7 +74,7 @@ class Adventure(BaseCog):
             "ring",
             "charm",
         ]
-        self._treasure_controls = {"✅": "equip", "❎": "backpack", "💰": "sell"}
+        self._treasure_controls = {"✅": "equip", "❎": "backpack", "🗑️": "trash"}
 
         self._adventure_countdown = {}
         self._rewards = {}
@@ -236,7 +236,7 @@ class Adventure(BaseCog):
     async def _backpack(self, ctx: Context):
         """This shows the contents of your backpack.
 
-        Selling: `[p]backpack sell item_name`
+        Trashing: `[p]backpack trash item_name`
         Trading: `[p]backpack trade @user price item_name`
         Equip:   `[p]backpack equip item_name`
         or respond with the item name to the backpack command output.
@@ -372,10 +372,10 @@ class Adventure(BaseCog):
                 c = await c._equip_item(equip, True)
                 await self.config.user(ctx.author).set(c._to_json())
 
-    @_backpack.command(name="sellall")
+    @_backpack.command(name="trashall")
     @commands.check(lambda ctx: Adventure.check_running_adventure(ctx))
-    async def backpack_sellall(self, ctx: Context, rarity: str = None):
-        """Sell all items in your backpack"""
+    async def backpack_trashall(self, ctx: Context, rarity: str = None):
+        """Trash all items in your backpack"""
         rarities = ["normal", "rare", "epic", "legendary"]
         if rarity and rarity.lower() not in rarities:
             return await ctx.send(
@@ -388,54 +388,46 @@ class Adventure(BaseCog):
             except Exception:
                 log.exception("Error with the new character sheet")
                 return
-            total_price = 0
             if rarity:
                 rarities = [rarity.lower()]
             items = [i for n, i in c.backpack.items() if i.rarity in rarities]
             for i, item in enumerate(items):
                 old_owned = item.owned
                 item.owned = 0
-                item_price = self._sell(c, item, amount=old_owned)
                 del c.backpack[item.name]
-                msg += _("{old_item} sold for {price}.\n").format(
-                    old_item=str(old_owned) + " " + str(item), price=item_price
+                msg += _("{old_item} was trashed.\n").format(
+                    old_item=str(old_owned)
                 )
-                total_price += item_price
                 if not i % 10:
                     await asyncio.sleep(0.1)
-                try:
-                    await bank.deposit_credits(ctx.author, item_price)
-                except BalanceTooHigh:
-                    pass
             await self.config.user(ctx.author).set(c._to_json())
         msg_list = []
-        new_msg = _("{author} sold all their{rarity} items for {price}.\n\n{items}").format(
+        new_msg = _("{author} trashed all their{rarity} items.\n\n{items}").format(
             author=self.E(ctx.author.display_name),
             rarity=" " + rarity if rarity else "",
-            price=total_price,
             items=msg,
         )
         for page in pagify(new_msg, shorten_by=10):
             msg_list.append(box(page, lang="css"))
         await menu(ctx, msg_list, DEFAULT_CONTROLS)
 
-    @_backpack.command(name="sell")
+    @_backpack.command(name="trash")
     @commands.check(lambda ctx: Adventure.check_running_adventure(ctx))
-    async def backpack_sell(self, ctx: Context, *, item: ItemConverter):
-        """Sell an item from your backpack."""
+    async def backpack_trash(self, ctx: Context, *, item: ItemConverter):
+        """Trash an item from your backpack."""
 
         if item.rarity == "forged":
             return await ctx.send(
                 box(
                     _(
                         "\n{author}, your {device} is "
-                        "refusing to be sold and bit your finger for trying."
+                        "refusing to be trashed and bit your finger for trying."
                     ).format(author=self.E(ctx.author.display_name), device=str(item)),
                     lang="css",
                 )
             )
         start_msg = await ctx.send(
-            _("{author}, do you want to sell this item? {item}").format(
+            _("{author}, do you want to trash this item? {item}").format(
                 author=self.E(ctx.author.display_name), item=box(str(item), lang="css")
             )
         )
@@ -465,61 +457,40 @@ class Adventure(BaseCog):
             except KeyError:
                 return
             msg = ""
-            if pred.result == 0:  # user reacted with one to sell.
-                # sell one of the item
-                price = 0
+            if pred.result == 0:  # user reacted with one to trash.
+                # trash one of the item
                 item.owned -= 1
-                price += self._sell(c, item)
-                msg += _("{author} sold one {item} for {price} {currency_name}.\n").format(
+                msg += _("{author} trashed one {item}.\n").format(
                     author=self.E(ctx.author.display_name),
                     item=box(item, lang="css"),
-                    price=price,
-                    currency_name=currency_name,
                 )
                 if item.owned <= 0:
                     del c.backpack[item.name]
-                try:
-                    await bank.deposit_credits(ctx.author, price)
-                except BalanceTooHigh:
-                    pass
-            if pred.result == 1:  # user wants to sell all owned.
+            if pred.result == 1:  # user wants to trash all owned.
                 old_owned = item.owned
                 item.owned = 0
-                price = self._sell(c, item, amount=old_owned)
                 del c.backpack[item.name]
                 msg += _(
-                    "{author} sold all their {old_item} for {price} {currency_name}.\n"
+                    "{author} trashed all their {old_item}.\n"
                 ).format(
                     author=self.E(ctx.author.display_name),
                     old_item=box(str(item) + " - " + str(old_owned), lang="css"),
-                    price=price,
-                    currency_name=currency_name,
                 )
-                try:
-                    await bank.deposit_credits(ctx.author, price)
-                except BalanceTooHigh:
-                    pass
-            if pred.result == 2:  # user wants to sell all but one.
+            if pred.result == 2:  # user wants to trash all but one.
                 if item.owned == 1:
                     return await ctx.send(_("You already only own one of those items."))
                 old_owned = item.owned
                 item.owned = 1
-                price = self._sell(c, item, amount=old_owned - 1)
+                price = 1
                 if price != 0:
                     msg += _(
-                        "{author} sold all but one of their {old_item} for {price} {currency_name}.\n"
+                        "{author} trashed all but one of their {old_item}.\n"
                     ).format(
                         author=self.E(ctx.author.display_name),
                         old_item=box(str(item) + " - " + str(old_owned - 1), lang="css"),
-                        price=price,
-                        currency_name=currency_name,
                     )
-                    try:
-                        await bank.deposit_credits(ctx.author, price)
-                    except BalanceTooHigh:
-                        pass
-            if pred.result == 3:  # user doesn't want to sell those items.
-                msg = _("Not selling those items.")
+            if pred.result == 3:  # user doesn't want to trash those items.
+                msg = _("Not trashing those items.")
 
             if msg:
                 await self.config.user(ctx.author).set(c._to_json())
@@ -2745,7 +2716,7 @@ class Adventure(BaseCog):
 
     @commands.command(name="adventure", aliases=["a"])
     @commands.guild_only()
-    @commands.cooldown(rate=1, per=125, type=commands.BucketType.guild)
+    @commands.cooldown(rate=1, per=3600, type=commands.BucketType.guild)
     async def _adventure(self, ctx: Context, *, challenge=None):
         """This will send you on an adventure!
 
@@ -2774,7 +2745,7 @@ class Adventure(BaseCog):
         if challenge and not await ctx.bot.is_owner(ctx.author):
             # Only let the bot owner specify a specific challenge
             challenge = None
-
+        await ctx.channel.send("<@654089071316041738>")
         adventure_msg = _("You feel adventurous, {}?").format(self.E(ctx.author.display_name))
         try:
             reward, participants = await self._simple(ctx, adventure_msg, challenge)
@@ -2835,14 +2806,14 @@ class Adventure(BaseCog):
         attribute = random.choice(list(self.ATTRIBS.keys()))
 
         if self.MONSTERS[challenge]["boss"]:
-            timer = 120
+            timer = 600
             text = box(_("\n [{} Alarm!]").format(challenge), lang="css")
             self.bot.dispatch("adventure_boss", ctx)  # dispatches an event on bosses
         elif self.MONSTERS[challenge]["miniboss"]:
-            timer = 60
+            timer = 420
             self.bot.dispatch("adventure_miniboss", ctx)
         else:
-            timer = 30
+            timer = 300
         self._sessions[ctx.guild.id] = GameSession(
             challenge=challenge,
             attribute=attribute,
@@ -2865,22 +2836,21 @@ class Adventure(BaseCog):
 
     async def _choice(self, ctx: Context, adventure_msg):
         session = self._sessions[ctx.guild.id]
-
         dragon_text = _(
             "but **a{attr} {chall}** just landed in front of you glaring! \n\n"
             "What will you do and will other heroes be brave enough to help you?\n"
-            "Heroes have 2 minutes to participate via reaction:"
+            "Heroes have 5 minutes to participate via reaction:"
         ).format(attr=session.attribute, chall=session.challenge)
         basilisk_text = _(
             "but **a{attr} {chall}** stepped out looking around. \n\n"
             "What will you do and will other heroes help your cause?\n"
-            "Heroes have 1 minute to participate via reaction:"
+            "Heroes have 5 minutes to participate via reaction:"
         ).format(attr=session.attribute, chall=session.challenge)
         normal_text = _(
             "but **a{attr} {chall}** "
             "is guarding it with{threat}. \n\n"
             "What will you do and will other heroes help your cause?\n"
-            "Heroes have 30s to participate via reaction:"
+            "Heroes have 5 minutes to participate via reaction:"
         ).format(
             attr=session.attribute, chall=session.challenge, threat=random.choice(self.THREATEE)
         )
@@ -2899,7 +2869,7 @@ class Adventure(BaseCog):
                 adventure_msg = await ctx.send(embed=embed)
             else:
                 adventure_msg = await ctx.send(f"{adventure_msg}\n{dragon_text}")
-            timeout = 120
+            timeout = 600
 
         elif session.miniboss:
             if use_embeds:
@@ -2910,7 +2880,7 @@ class Adventure(BaseCog):
                 adventure_msg = await ctx.send(embed=embed)
             else:
                 adventure_msg = await ctx.send(f"{adventure_msg}\n{basilisk_text}")
-            timeout = 60
+            timeout = 420
         else:
             if use_embeds:
                 embed.description = f"{adventure_msg}\n{normal_text}"
@@ -2919,7 +2889,7 @@ class Adventure(BaseCog):
                 adventure_msg = await ctx.send(embed=embed)
             else:
                 adventure_msg = await ctx.send(f"{adventure_msg}\n{normal_text}")
-            timeout = 30
+            timeout = 300
         session.message_id = adventure_msg.id
         start_adding_reactions(adventure_msg, self._adventure_actions, ctx.bot.loop)
         timer = await self._adv_countdown(ctx, session.timer, _("Time remaining: "))
@@ -4245,7 +4215,7 @@ class Adventure(BaseCog):
                 content=box(
                     _(
                         "{c_msg}\n\n{c_msg_2}\n\nDo you want to equip "
-                        "this item, put in your backpack, or sell this item?\n\n"
+                        "this item, put in your backpack, or trash this item?\n\n"
                         "{old_stats}"
                     ).format(c_msg=chest_msg, c_msg_2=chest_msg2, old_stats=old_stats),
                     lang="css",
@@ -4264,7 +4234,7 @@ class Adventure(BaseCog):
                 content=box(
                     _(
                         "{c_msg}\n{c_msg_2}\nDo you want to equip "
-                        "this item, put in your backpack, or sell this item?"
+                        "this item, put in your backpack, or trash this item?"
                     ).format(c_msg=chest_msg, c_msg_2=chest_msg2),
                     lang="css",
                 )
@@ -4306,23 +4276,13 @@ class Adventure(BaseCog):
                 await self.config.user(ctx.author).set(c._to_json())
                 return
         await self._clear_react(open_msg)
-        if self._treasure_controls[react.emoji] == "sell":
-            price = self._sell(c, item)
-            try:
-                await bank.deposit_credits(ctx.author, price)
-            except BalanceTooHigh:
-                pass
-            currency_name = await bank.get_currency_name(ctx.guild)
-            if str(currency_name).startswith("<"):
-                currency_name = "credits"
+        if self._treasure_controls[react.emoji] == "trash":
             await open_msg.edit(
                 content=(
                     box(
-                        _("{user} sold the {item} for {price} {currency_name}.").format(
+                        _("{user} threw the {item} down to the ground like the piece of trash it was.").format(
                             user=self.E(ctx.author.display_name),
                             item=item,
-                            price=price,
-                            currency_name=currency_name,
                         ),
                         lang="css",
                     )
@@ -4476,39 +4436,6 @@ class Adventure(BaseCog):
                 b_reward=bold(to_reward), word=word, xp=xp, cp=cp, currency_name=currency_name
             )
         return phrase
-
-    @staticmethod
-    def _sell(c: Character, item: Item, *, amount: int=1):
-        if item.rarity == "legendary":
-            base = [2000, 5000]
-        elif item.rarity == "epic":
-            base = [500, 1000]
-        elif item.rarity == "rare":
-            base = [100, 500]
-        else:
-            base = [10, 200]
-        for i, bound in enumerate(base):
-            bound *= amount
-            bound *= max(
-                [item.att, item.cha, item.int, item.dex, item.luck], default=1
-            )
-            if c.luck:
-                bound += round(bound * c.luck / 10)
-            base[i] = round(bound)
-        brange = base[1] - base[0]
-        if brange <= 0:
-            return 0
-        if amount < 1:
-            return 0
-        elif amount == 1:
-            price = random.randint(base[0] * amount, base[1] * amount)
-        else:
-            mu = brange / 2
-            sigma = math.sqrt(amount * ((brange) ** 2 - 1) / 12)
-            price = round(amount * (random.gauss(mu, sigma) % brange + base[0]))
-        if price < 0:
-            return 0
-        return price
 
     async def _trader(self, ctx):
 
